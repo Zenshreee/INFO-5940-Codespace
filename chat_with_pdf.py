@@ -3,44 +3,98 @@ import os
 from openai import OpenAI
 from os import environ
 
+from rag import add_files, answer
+
 client = OpenAI(
 	api_key=os.environ["API_KEY"],
 	base_url="https://api.ai.it.cornell.edu",
 )
 
-st.title("📝 File Q&A with OpenAI")
-uploaded_file = st.file_uploader("Upload an article", type=("txt", "md"))
+st.set_page_config(
+    page_title="INFO5940 RAG Chat",
+    page_icon="💬",
+    layout="wide",
+)
+st.title("📝 File Q&A with Retrieval")
 
-question = st.chat_input(
-    "Ask something about the article",
-    disabled=not uploaded_file,
+st.markdown(
+    """
+    Upload one or more .txt / .pdf files.  
+    Ask questions in chat.  
+    Answers come only from the uploaded files.
+    """
+)
+st.sidebar.header("1. Upload documents")
+
+uploaded_files = st.sidebar.file_uploader(
+    "Choose files",
+    type=["txt", "pdf"],
+    accept_multiple_files=True,
 )
 
+if "indexed_docs" not in st.session_state:
+    st.session_state["indexed_docs"] = []
+
+if st.sidebar.button("Add to knowledge base"):
+    if not uploaded_files:
+        st.sidebar.warning("No files selected.")
+    else:
+        new_docs = add_files(uploaded_files)
+        if len(new_docs) == 0:
+            st.sidebar.error("No readable text found in those files.")
+        else:
+            st.session_state.indexed_docs.extend(new_docs)
+            st.sidebar.success("Indexing Success")
+
+st.sidebar.subheader("Indexed so far")
+if len(st.session_state.indexed_docs) == 0:
+    st.sidebar.write("_none yet_")
+else:
+    for info in st.session_state.indexed_docs:
+        st.sidebar.write(f"- {info['filename']}")
+
+
+st.subheader("2. Chat with your documents")
+
 if "messages" not in st.session_state:
-    st.session_state["messages"] = [{"role": "assistant", "content": "Ask something about the article"}]
+    st.session_state["messages"] = [
+        {
+            "role": "assistant",
+            "content": "Ask a question about the uploaded documents. I will try my best to answer!",
+        }
+    ]
 
 for msg in st.session_state.messages:
-    st.chat_message(msg["role"]).write(msg["content"])
+    with st.chat_message("user" if msg["role"] == "user" else "assistant"):
+        st.write(msg["content"])
 
-if question and uploaded_file:
-    # Read the content of the uploaded file
-    file_content = uploaded_file.read().decode("utf-8")
-    print(file_content)
 
-    # Append the user's question to the messages
-    st.session_state.messages.append({"role": "user", "content": question})
-    st.chat_message("user").write(question)
+user_question = st.chat_input(
+    "Ask a question...",
+    disabled=len(st.session_state.indexed_docs) == 0,
+)
 
+
+if user_question:
+    st.session_state.messages.append(
+        {"role": "user", "content": user_question}
+    )
+    with st.chat_message("user"):
+        st.write(user_question)
+
+    bot_reply = answer(
+        question=user_question,
+        history=st.session_state.messages,
+    )
+
+    st.session_state.messages.append(
+        {"role": "assistant", "content": bot_reply}
+    )
     with st.chat_message("assistant"):
-        stream = client.chat.completions.create(
-            model="gpt-4o",  # Change this to a valid model name
-            messages=[
-                {"role": "system", "content": f"Here's the content of the file:\n\n{file_content}"},
-                *st.session_state.messages
-            ],
-            stream=True
-        )
-        response = st.write_stream(stream)
+        st.write(bot_reply)
 
-    # Append the assistant's response to the messages
-    st.session_state.messages.append({"role": "assistant", "content": response})
+st.markdown("---")
+st.caption(
+    "Behind the scenes: files are chunked, embedded, stored in Chroma, and "
+    "retrieved to answer each question."
+)
