@@ -60,9 +60,14 @@ def redact_for_logs(value: Any) -> Any:
             return "[redacted]"
         return value if len(value) <= 300 else value[:120] + "… [truncated]"
     if isinstance(value, dict):
-        return {k: ("[redacted]" if any(s in k.lower() for s in ("key", "token", "secret", "password"))
-                    else redact_for_logs(v))
-                for k, v in value.items()}
+        return {
+            k: (
+                "[redacted]"
+                if any(s in k.lower() for s in ("key", "token", "secret", "password"))
+                else redact_for_logs(v)
+            )
+            for k, v in value.items()
+        }
     if isinstance(value, list):
         return [redact_for_logs(v) for v in value]
     return value
@@ -81,6 +86,7 @@ from agents import Agent, Runner, function_tool  # type: ignore
 # Tools
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 @function_tool
 def internet_search(query: str) -> str:
     """
@@ -88,7 +94,13 @@ def internet_search(query: str) -> str:
     - Reads TAVILY_API_KEY from environment.
     - Sends simple log events before/after the call so the UI can show activity.
     """
-    log_tool_event({"type": "call", "tool": "internet_search", "args": {"query": redact_for_logs(query)}})
+    log_tool_event(
+        {
+            "type": "call",
+            "tool": "internet_search",
+            "args": {"query": redact_for_logs(query)},
+        }
+    )
 
     try:
         api_key = os.getenv("TAVILY_API_KEY")
@@ -101,14 +113,20 @@ def internet_search(query: str) -> str:
         response = client.search(query, max_results=3)
 
         items = response.get("results", [])
-        lines = [f"- {it.get('title', 'N/A')}: {it.get('content', 'N/A')}" for it in items]
+        lines = [
+            f"- {it.get('title', 'N/A')}: {it.get('content', 'N/A')}" for it in items
+        ]
         output = "\n".join(lines) if lines else "No results found."
 
-        log_tool_event({
-            "type": "result",
-            "tool": "internet_search",
-            "preview": redact_for_logs(output[:400] + ("…" if len(output) > 400 else "")),
-        })
+        log_tool_event(
+            {
+                "type": "result",
+                "tool": "internet_search",
+                "preview": redact_for_logs(
+                    output[:400] + ("…" if len(output) > 400 else "")
+                ),
+            }
+        )
         return output
 
     except Exception as e:
@@ -125,18 +143,81 @@ def internet_search(query: str) -> str:
 
 # BEGIN SOLUTION
 REVIEWER_INSTRUCTIONS = """
+You are an expert Travel Reviewer Agent responsible for validating and improving travel itineraries.
 
+Your Role:
+1. Review the provided itinerary for accuracy, feasibility, and quality
+2. Use the internet_search tool to verify critical details such as:
+   - Opening hours and days of attractions/restaurants
+   - Current ticket prices and booking requirements
+   - Travel times between locations
+   - Seasonal closures or special events
+   - Restaurant availability and reviews
+   - Hotel availability and reviews
+3. Identify issues such as:
+   - Unrealistic timing
+   - Conflicting activities
+   - Budget inconsistencies
+   - Logistical problems
+4. Provide a comprehensive review with:
+   - Validation Results: Overall assessment of the itinerary
+   - Delta List: Specific, concrete changes needed with clear reasons
+     Format: "Day X, Activity Y: [Issue] -> [Suggested Fix] (Reason)"
+   - Verified Information: Key facts you've confirmed via search
+   - Final Recommendation: Whether the plan is ready or needs revision
+5. After providing the Delta List, provide a Revised Itinerary section that incorporates all the fixes and suggestions. This should be a complete, updated day-by-day plan that addresses all identified issues.
+
+Be thorough, specific, and constructive. Always cite sources when you've verified information online.
+Present your findings in a clear, structured format that's easy for the user to read and follow.
 """
 
 PLANNER_INSTRUCTIONS = """
+You are an expert Travel Planner Agent specialized in creating comprehensive, personalized itineraries. Your role is to transform vague travel requests into detailed, day-by-day travel plans.
 
+When given a travel request, create an itinerary that includes:
+
+Structure:
+- Day-by-day breakdown with clear dates (or Day 1, Day 2, etc.)
+- Morning, afternoon, and evening activities for each day
+- Specific locations, attractions, restaurants, and accommodation
+
+Details for each activity:
+- Approximate time and duration (e.g., "9:00 AM - 11:00 AM, 2 hours")
+- Specific location/address
+- Estimated cost per person
+- Brief description of the activity
+- Travel time and method to next activity
+
+Budget Planning:
+- Break down costs by category (accommodation, food, activities, transport)
+- Track running total
+- Stay within the user's budget constraints
+- Highlight any budget-saving tips
+
+User Preferences:
+- Tailor activities to stated interests (history, food, art, nature, and more)
+- Consider pacing preferences (relaxed or packed schedule)
+- Account for travel dates, group size, and special needs
+
+Logistics:
+- Cluster activities by geographic area to minimize travel time
+- Suggest appropriate transportation between locations
+- Include realistic timing and transitions
+- Note any booking requirements or advance planning needed
+
+The format should be:
+Use clear headers, bullet points, and structure. Make it easy to read and follow.
+Be specific with names of places. Not just generic suggestions.
+
+Draw on your knowledge base to create practical, enjoyable itineraries. 
+You do NOT have internet access, so work from your training knowledge.
 """
 
 reviewer_agent = Agent(
     name="Reviewer Agent",
     model="openai.gpt-4o",
     instructions=REVIEWER_INSTRUCTIONS.strip(),
-    tools=[]
+    tools=[internet_search],
 )
 
 planner_agent = Agent(
@@ -151,6 +232,7 @@ planner_agent = Agent(
 # ──────────────────────────────────────────────────────────────────────────────
 # Orchestration Helpers
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def extract_text(result_obj: Any) -> str:
     """
@@ -193,7 +275,9 @@ with st.sidebar:
         st.rerun()
 
     st.subheader("Try these prompts")
-    st.code("Plan a week-long Europe trip for a student on a $1,500 budget who loves history and food")
+    st.code(
+        "Plan a week-long Europe trip for a student on a $1,500 budget who loves history and food"
+    )
     st.code("3-day Paris trip for art lovers with $800 budget")
 
     st.subheader("Developer view")
@@ -208,7 +292,7 @@ with st.sidebar:
 if "messages" not in st.session_state:
     st.session_state.messages = []  # list[dict(role, content)]
 if "meta" not in st.session_state:
-    st.session_state.meta = []      # list[dict(trace)]
+    st.session_state.meta = []  # list[dict(trace)]
 
 # Render history
 for i, msg in enumerate(st.session_state.messages):
@@ -220,7 +304,9 @@ for i, msg in enumerate(st.session_state.messages):
                 st.caption(meta.get("trace", ""))
 
 # Chat input
-user_input = st.chat_input("Describe your travel (destination, duration, budget, interests)…")
+user_input = st.chat_input(
+    "Describe your travel (destination, duration, budget, interests)…"
+)
 
 if user_input:
     # Add user message to history and render it
@@ -264,14 +350,21 @@ if user_input:
                 st.empty()
 
             # Step 1: Planner
-            with st.status("🧭 Planner Agent: generating itinerary…", expanded=True) as status:
+            with st.status(
+                "🧭 Planner Agent: generating itinerary…", expanded=True
+            ) as status:
                 live_msg.markdown("🧭 Planner Agent is creating your itinerary…")
                 plan_text = run_planner(user_input)
                 progress.progress(40)
-                status.update(label="🔎 Reviewer Agent: validating with live searches…", state="running")
+                status.update(
+                    label="🔎 Reviewer Agent: validating with live searches…",
+                    state="running",
+                )
 
             # Step 2: Reviewer (tool calls will appear live in sidebar)
-            live_msg.markdown("🔎 Reviewer Agent is validating the plan with live searches…")
+            live_msg.markdown(
+                "🔎 Reviewer Agent is validating the plan with live searches…"
+            )
             review_text = run_reviewer(plan_text)
             progress.progress(90)
 
@@ -287,7 +380,9 @@ if user_input:
                 st.markdown(plan_text)
 
             # Save only the validated result to history
-            st.session_state.messages.append({"role": "assistant", "content": review_text})
+            st.session_state.messages.append(
+                {"role": "assistant", "content": review_text}
+            )
             st.session_state.meta.append({"trace": "Planner Agent → Reviewer Agent"})
             st.caption("Planner Agent → Reviewer Agent")
 
